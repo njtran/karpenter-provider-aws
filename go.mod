@@ -28,7 +28,7 @@ require (
 	sigs.k8s.io/controller-runtime v0.9.7
 )
 
-require github.com/samber/lo v1.21.0
+require github.com/samber/lo v1.27.0
 
 require (
 	cloud.google.com/go v0.97.0 // indirect
@@ -87,7 +87,7 @@ require (
 	google.golang.org/protobuf v1.27.1 // indirect
 	gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
-	gopkg.in/yaml.v3 v3.0.0 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/apiextensions-apiserver v0.21.4 // indirect
 	k8s.io/component-base v0.21.4 // indirect
 	k8s.io/klog v1.0.0 // indirect
