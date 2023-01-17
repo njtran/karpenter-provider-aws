@@ -6,6 +6,34 @@ description: >
   Troubleshoot Karpenter problems
 ---
 
+## Installation Webhook Timeout on v0.19.0+
+
+If you're upgrading from before `v0.19.0` to `v0.19.0+`, are using ArgoCD, and are unable to call your webhook, your ArgoCD sync may be trying to check for webhooks that no longer exist, since the name has changed.
+
+Add the following to the ArgoCD `application.yaml` for Karpenter under the spec object.
+```
+      ignoreDifferences:
+      - kind: ValidatingWebhookConfiguration
+        group: admissionregistration.k8s.io
+        name: validation.webhook.karpenter.k8s.aws
+        jqPathExpressions:
+        - .webhooks[].rules[].operations
+      - kind: Provisioner
+        group: karpenter.sh
+        jqPathExpressions:
+        - .spec.requirements[] | select(.key == "kubernetes.io/os")
+```
+
+Once this is done, update the chart and sync. Then delete the stale webhooks with the following:
+```
+kubectl delete mutatingwebhookconfigurations defaulting.webhook.provisioners.karpenter.sh
+kubectl delete validatingwebhookconfiguration validation.webhook.provisioners.karpenter.sh
+```
+After this, sync ArgoCD once again. If this does not work, you can also try to delete the CRDs used in Karpenter and then re-sync.
+```
+kubectl delete crd awsnodetemplates.karpenter.k8s.aws provisioners.karpenter.sh
+```
+
 ## Unknown field in Provisioner spec
 
 If you are upgrading from an older version of Karpenter, there may have been changes in the CRD between versions. Attempting to utilize newer functionality which is surfaced in newer versions of the CRD may result in the following error message:

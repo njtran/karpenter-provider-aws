@@ -6,6 +6,34 @@ description: >
   Troubleshoot Karpenter problems
 ---
 
+## Installation Webhook Timeout on v0.19.0+
+
+If you're upgrading from before `v0.19.0` to `v0.19.0+`, are using ArgoCD, and are unable to call your webhook, your ArgoCD sync may be trying to check for webhooks that no longer exist, since the name has changed.
+
+Add the following to the ArgoCD `application.yaml` for Karpenter under the spec object.
+```
+      ignoreDifferences:
+      - kind: ValidatingWebhookConfiguration
+        group: admissionregistration.k8s.io
+        name: validation.webhook.karpenter.k8s.aws
+        jqPathExpressions:
+        - .webhooks[].rules[].operations
+      - kind: Provisioner
+        group: karpenter.sh
+        jqPathExpressions:
+        - .spec.requirements[] | select(.key == "kubernetes.io/os")
+```
+
+Once this is done, update the chart and sync. Then delete the stale webhooks with the following:
+```
+kubectl delete mutatingwebhookconfigurations defaulting.webhook.provisioners.karpenter.sh
+kubectl delete validatingwebhookconfiguration validation.webhook.provisioners.karpenter.sh
+```
+After this, sync ArgoCD once again. If this does not work, you can also try to delete the CRDs used in Karpenter and then re-sync.
+```
+kubectl delete crd awsnodetemplates.karpenter.k8s.aws provisioners.karpenter.sh
+```
+
 ## Unknown field in Provisioner spec
 
 If you are upgrading from an older version of Karpenter, there may have been changes in the CRD between versions. Attempting to utilize newer functionality which is surfaced in newer versions of the CRD may result in the following error message:
@@ -378,4 +406,4 @@ If Helm is showing an error when trying to install Karpenter helm charts:
  - Verify that the image you are trying to pull actually exists in [gallery.ecr.aws/karpenter](https://gallery.ecr.aws/karpenter/karpenter)
  - Sometimes Helm generates a generic error, you can add the --debug switch to any of the helm commands in this doc for more verbose error messages
  - If you are getting a 403 forbidden error, you can try `docker logout public.ecr.aws` as explained [here](https://docs.aws.amazon.com/AmazonECR/latest/public/public-troubleshooting.html)
- - If you are receiving this error: `Error: failed to download "oci://public.ecr.aws/karpenter/karpenter" at version "0.17.0"`, then you need to prepend a `v` to the version number: `v0.17.0`. Before Karpenter moved to OCI helm charts (pre-v0.17.0), both `v0.16.0` and `0.16.0` would work, but OCI charts require an exact version match. 
+ - If you are receiving this error: `Error: failed to download "oci://public.ecr.aws/karpenter/karpenter" at version "0.17.0"`, then you need to prepend a `v` to the version number: `v0.17.0`. Before Karpenter moved to OCI helm charts (pre-v0.17.0), both `v0.16.0` and `0.16.0` would work, but OCI charts require an exact version match.
