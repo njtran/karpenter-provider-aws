@@ -143,18 +143,38 @@ licenses: download ## Verifies dependency licenses
 setup: ## Sets up the IAM roles needed prior to deploying the karpenter-controller. This command only needs to be run once
 	CLUSTER_NAME=${CLUSTER_NAME} ./$(GETTING_STARTED_SCRIPT_DIR)/add-roles.sh $(KARPENTER_VERSION)
 
-image: ## Build the Karpenter controller images using ko build
+build: ## Build the Karpenter controller images using ko build
 	$(eval CONTROLLER_IMG=$(shell $(WITH_GOFLAGS) KO_DOCKER_REPO="$(KO_DOCKER_REPO)" ko build --bare github.com/aws/karpenter/cmd/controller))
 	$(eval IMG_REPOSITORY=$(shell echo $(CONTROLLER_IMG) | cut -d "@" -f 1 | cut -d ":" -f 1))
 	$(eval IMG_TAG=$(shell echo $(CONTROLLER_IMG) | cut -d "@" -f 1 | cut -d ":" -f 2 -s))
 	$(eval IMG_DIGEST=$(shell echo $(CONTROLLER_IMG) | cut -d "@" -f 2))
 
-apply: image ## Deploy the controller from the current state of your git repository into your ~/.kube/config cluster
+build-kwok: ## Build the Karpenter KWOK controller images using ko build
+	$(eval CONTROLLER_IMG=$(shell $(WITH_GOFLAGS) KO_DOCKER_REPO="$(KO_DOCKER_REPO)" ko build -B github.com/aws/karpenter/cmd/controller-kwok))
+	$(eval IMG_REPOSITORY=$(shell echo $(CONTROLLER_IMG) | cut -d "@" -f 1 | cut -d ":" -f 1))
+	$(eval IMG_TAG=$(shell echo $(CONTROLLER_IMG) | cut -d "@" -f 1 | cut -d ":" -f 2 -s))
+	$(eval IMG_DIGEST=$(shell echo $(CONTROLLER_IMG) | cut -d "@" -f 2))
+
+
+apply: build ## Deploy the controller from the current state of your git repository into your ~/.kube/config cluster
 	helm upgrade --install karpenter charts/karpenter --namespace ${SYSTEM_NAMESPACE} \
 		$(HELM_OPTS) \
 		--set controller.image.repository=$(IMG_REPOSITORY) \
 		--set controller.image.tag=$(IMG_TAG) \
 		--set controller.image.digest=$(IMG_DIGEST)
+
+# Run hack/install-kwok.sh to install the kwok controller in your cluster first
+apply-kwok: build-kwok ## Deploy the kwok controller from the current state of your git repository into your ~/.kube/config cluster
+	helm upgrade --install karpenter charts/karpenter --namespace ${SYSTEM_NAMESPACE} \
+		$(HELM_OPTS) \
+		--set controller.image.repository=$(IMG_REPOSITORY) \
+		--set controller.image.tag=$(IMG_TAG) \
+		--set controller.image.digest=$(IMG_DIGEST)
+
+	kubectl delete validatingwebhookconfiguration validation.webhook.config.karpenter.sh
+	kubectl delete validatingwebhookconfiguration validation.webhook.karpenter.k8s.aws
+	kubectl delete validatingwebhookconfiguration validation.webhook.karpenter.sh
+	kubectl delete mutatingwebhookconfiguration defaulting.webhook.karpenter.k8s.aws
 
 install:  ## Deploy the latest released version into your ~/.kube/config cluster
 	@echo Upgrading to ${KARPENTER_VERSION}
