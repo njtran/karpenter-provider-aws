@@ -33,6 +33,7 @@ import (
 
 	"github.com/aws/karpenter-core/pkg/apis/v1alpha5"
 	"github.com/aws/karpenter-core/pkg/cloudprovider"
+	"github.com/aws/karpenter-core/pkg/scheduling"
 	"github.com/aws/karpenter/pkg/providers/pricing"
 )
 
@@ -42,7 +43,8 @@ var instanceTypesOutput ec2.DescribeInstanceTypesOutput
 
 const kwokProviderPrefix = "kwok://"
 
-var kwokZones = []string{"zone-1", "zone-2", "zone-3"}
+var kwokZones = []string{"us-west-2a", "us-west-2b", "us-west-2c", "us-west-2d"}
+var partitions = []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"}
 
 func init() {
 	dec := json.NewDecoder(bytes.NewReader(usEastInstanceTypes))
@@ -67,6 +69,7 @@ type CloudProvider struct {
 }
 
 func (c CloudProvider) Create(ctx context.Context, machine *v1alpha5.Machine) (*v1alpha5.Machine, error) {
+	// Create the Node because KWOK nodes don't have a kubelet.
 	node, err := c.toNode(machine)
 	if err != nil {
 		return nil, fmt.Errorf("translating machine to node, %w", err)
@@ -121,7 +124,7 @@ func (c CloudProvider) List(ctx context.Context) ([]*v1alpha5.Machine, error) {
 func (c CloudProvider) GetInstanceTypes(ctx context.Context, provisioner *v1alpha5.Provisioner) ([]*cloudprovider.InstanceType, error) {
 	var ret []*cloudprovider.InstanceType
 	for _, it := range instanceTypesOutput.InstanceTypes {
-		offerings := c.offerings(it)
+		offerings := c.offerings(ctx, it)
 		ret = append(ret, &cloudprovider.InstanceType{
 			Name:         *it.InstanceType,
 			Requirements: requirements(it, offerings),
@@ -138,7 +141,7 @@ func (c CloudProvider) GetInstanceTypes(ctx context.Context, provisioner *v1alph
 	return ret, nil
 }
 
-func (c CloudProvider) offerings(it *ec2.InstanceTypeInfo) cloudprovider.Offerings {
+func (c CloudProvider) offerings(ctx context.Context, it *ec2.InstanceTypeInfo) cloudprovider.Offerings {
 	var ret cloudprovider.Offerings
 	for _, zone := range kwokZones {
 		if odPrice, ok := c.pricing.OnDemandPrice(*it.InstanceType); ok {
@@ -148,11 +151,13 @@ func (c CloudProvider) offerings(it *ec2.InstanceTypeInfo) cloudprovider.Offerin
 				Price:        odPrice,
 				Available:    true,
 			})
+		}
+		if spotPrice, ok := c.pricing.SpotPrice(*it.InstanceType, zone); ok {
 			// just supply a 50% discount for spot since we don't have static spot pricing
 			ret = append(ret, cloudprovider.Offering{
 				CapacityType: v1alpha5.CapacityTypeSpot,
 				Zone:         zone,
-				Price:        odPrice * 0.5,
+				Price:        spotPrice,
 				Available:    true,
 			})
 		}
@@ -174,13 +179,32 @@ func (c CloudProvider) toNode(machine *v1alpha5.Machine) (*v1.Node, error) {
 
 	var instanceTypeName string
 	var instanceTypePrice float64
+	capacityType := v1alpha5.CapacityTypeOnDemand
+	requirements := scheduling.NewNodeSelectorRequirements(machine.
+		Spec.Requirements...)
+	if requirements.Get(v1alpha5.LabelCapacityType).Has(v1alpha5.CapacityTypeSpot) {
+		capacityType = v1alpha5.CapacityTypeSpot
+	}
+	zone := randomChoice(kwokZones)
 	for _, req := range machine.Spec.Requirements {
 		if req.Key == v1.LabelInstanceTypeStable {
 			// pick the cheapest OD instance type
 			instanceTypeName = req.Values[0]
-			instanceTypePrice, _ = c.pricing.OnDemandPrice(instanceTypeName)
+			if capacityType == "spot" {
+				instanceTypePrice, _ = c.pricing.SpotPrice(instanceTypeName, zone)
+			} else {
+				// Default to OD
+				instanceTypePrice, _ = c.pricing.OnDemandPrice(instanceTypeName)
+			}
 			for _, it := range req.Values {
-				if price, ok := c.pricing.OnDemandPrice(it); ok && price < instanceTypePrice {
+				var price float64
+				var ok bool
+				if capacityType == "spot" {
+					price, ok = c.pricing.SpotPrice(it, zone)
+				} else {
+					price, ok = c.pricing.OnDemandPrice(it)
+				}
+				if ok && price < instanceTypePrice {
 					instanceTypePrice = price
 					instanceTypeName = it
 				}
@@ -207,7 +231,7 @@ func (c CloudProvider) toNode(machine *v1alpha5.Machine) (*v1.Node, error) {
 	return &v1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        newName,
-			Labels:      addInstanceLabels(machine.Labels, instanceType, machine),
+			Labels:      addInstanceLabels(machine.Labels, instanceType, machine, capacityType),
 			Annotations: addKwokAnnotation(machine.Annotations),
 		},
 		Spec: v1.NodeSpec{
@@ -221,7 +245,7 @@ func (c CloudProvider) toNode(machine *v1alpha5.Machine) (*v1.Node, error) {
 	}, nil
 }
 
-func addInstanceLabels(labels map[string]string, instanceType *cloudprovider.InstanceType, machine *v1alpha5.Machine) map[string]string {
+func addInstanceLabels(labels map[string]string, instanceType *cloudprovider.InstanceType, machine *v1alpha5.Machine, capacityType string) map[string]string {
 	ret := make(map[string]string, len(labels))
 	// start with labels on the machine
 	for k, v := range labels {
@@ -242,14 +266,24 @@ func addInstanceLabels(labels map[string]string, instanceType *cloudprovider.Ins
 			ret[r.Key] = r.Values()[0]
 		}
 	}
-
+	// Kwok has some scalability limitations.
+	// Randomly add each new node to one of the pre-created partitions.
+	ret["kwok-partition"] = randomPartition(10)
+	ret[v1alpha5.LabelCapacityType] = capacityType
 	// no zone set by requirements, so just pick one
 	if _, ok := ret[v1.LabelTopologyZone]; !ok {
 		ret[v1.LabelTopologyZone] = randomChoice(kwokZones)
 	}
+	ret[v1.LabelHostname] = machine.Name
 
 	ret["kwok.x-k8s.io/node"] = "fake"
 	return ret
+}
+
+// pick one of the first n letters
+func randomPartition(n int) string {
+	i := rand.Intn(len(partitions))
+	return partitions[i]
 }
 
 func randomChoice(zones []string) string {
