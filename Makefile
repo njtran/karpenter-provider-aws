@@ -169,7 +169,9 @@ apply-kwok: build-kwok ## Deploy the kwok controller from the current state of y
 		$(HELM_OPTS) \
 		--set controller.image.repository=$(IMG_REPOSITORY) \
 		--set controller.image.tag=$(IMG_TAG) \
-		--set controller.image.digest=$(IMG_DIGEST)
+		--set controller.image.digest=$(IMG_DIGEST) \
+		--set-string controller.env[0].name=ENABLE_PROFILING \
+		--set-string controller.env[0].value=true
 
 	kubectl delete validatingwebhookconfiguration validation.webhook.config.karpenter.sh
 	kubectl delete validatingwebhookconfiguration validation.webhook.karpenter.k8s.aws
