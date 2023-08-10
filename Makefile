@@ -183,6 +183,9 @@ install:  ## Deploy the latest released version into your ~/.kube/config cluster
 	helm upgrade --install karpenter oci://public.ecr.aws/karpenter/karpenter --version ${KARPENTER_VERSION} --namespace ${SYSTEM_NAMESPACE} \
 		$(HELM_OPTS)
 
+install-prometheus:
+	$(WITH_GOFLAGS) CLUSTER_NAME=${CLUSTER_NAME} ./hack/install-managed-prometheus.sh
+
 delete: ## Delete the controller from your ~/.kube/config cluster
 	helm uninstall karpenter --namespace karpenter
 
