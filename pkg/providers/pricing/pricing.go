@@ -93,7 +93,7 @@ func NewAPI(sess *session.Session, region string) pricingiface.PricingAPI {
 	return pricing.New(sess, &aws.Config{Region: aws.String(pricingAPIRegion)})
 }
 
-func NewProvider(_ context.Context, pricing pricingiface.PricingAPI, ec2Api ec2iface.EC2API, region string) *Provider {
+func NewProvider(ctx context.Context, pricing pricingiface.PricingAPI, ec2Api ec2iface.EC2API, region string) *Provider {
 	p := &Provider{
 		region:  region,
 		ec2:     ec2Api,
@@ -103,6 +103,9 @@ func NewProvider(_ context.Context, pricing pricingiface.PricingAPI, ec2Api ec2i
 	// sets the pricing data from the static default state for the provider
 	p.Reset()
 
+	if err := p.UpdateSpotPricing(ctx); err != nil {
+		logging.FromContext(ctx).Errorf("Updating spot pricing at restart, %w", err)
+	}
 	return p
 }
 

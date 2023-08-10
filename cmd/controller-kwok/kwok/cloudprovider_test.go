@@ -25,8 +25,6 @@ import (
 
 func TestCloudProviderDescribeInstanceTypes(t *testing.T) {
 	env := test.NewEnvironment(scheme.Scheme)
-	cp := kwok.NewCloudProvider(env.KubernetesInterface)
-
 	ctx := settings.ToContext(context.Background(), &settings.Settings{
 		ClusterName:                "clustername",
 		ClusterEndpoint:            "clusterendpoint",
@@ -39,6 +37,8 @@ func TestCloudProviderDescribeInstanceTypes(t *testing.T) {
 		Tags:                       nil,
 		ReservedENIs:               0,
 	})
+	cp := kwok.NewCloudProvider(ctx, env.KubernetesInterface)
+
 	prov := test.Provisioner()
 	instanceTypes, err := cp.GetInstanceTypes(ctx, prov)
 	if err != nil {

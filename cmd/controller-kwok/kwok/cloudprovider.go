@@ -18,23 +18,34 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math/rand"
 	"strings"
 	"sync"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
+	awsclient "github.com/aws/aws-sdk-go/aws/client"
+	"github.com/aws/aws-sdk-go/aws/ec2metadata"
+	"github.com/aws/aws-sdk-go/aws/endpoints"
+	"github.com/aws/aws-sdk-go/aws/request"
+	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/docker/docker/pkg/namesgenerator"
+	"github.com/samber/lo"
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
+	kubeErrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"knative.dev/pkg/logging"
 
 	"github.com/aws/karpenter-core/pkg/apis/v1alpha5"
 	"github.com/aws/karpenter-core/pkg/cloudprovider"
 	"github.com/aws/karpenter-core/pkg/scheduling"
 	"github.com/aws/karpenter/pkg/providers/pricing"
+	"github.com/aws/karpenter/pkg/utils/project"
 )
 
 //go:embed describe-instance-types.json
@@ -53,16 +64,37 @@ func init() {
 	}
 }
 
-func NewCloudProvider(client kubernetes.Interface) *CloudProvider {
-	p := pricing.NewProvider(nil, nil, nil, "")
+func NewCloudProvider(ctx context.Context, client kubernetes.Interface) *CloudProvider {
+	// Start session to get AWS pricing
+	sess := withUserAgent(session.Must(session.NewSession(
+		request.WithRetryer(
+			&aws.Config{STSRegionalEndpoint: endpoints.RegionalSTSEndpoint},
+			awsclient.DefaultRetryer{NumMaxRetries: awsclient.DefaultRetryerMaxNumRetries},
+		),
+	)))
+	if *sess.Config.Region == "" {
+		logging.FromContext(ctx).Debug("retrieving region from IMDS")
+		region, err := ec2metadata.New(sess).Region()
+		*sess.Config.Region = lo.Must(region, err, "failed to get region from metadata server")
+	}
+	ec2api := ec2.New(sess)
+	if err := checkEC2Connectivity(ctx, ec2api); err != nil {
+		logging.FromContext(ctx).Fatalf("Checking EC2 API connectivity, %s", err)
+	}
+	logging.FromContext(ctx).With("region", *sess.Config.Region).Debugf("discovered region")
+	p := pricing.NewProvider(ctx,
+		pricing.NewAPI(sess, *sess.Config.Region),
+		ec2api,
+		*sess.Config.Region,
+	)
 	return &CloudProvider{
-		pricing:    p,
+		Pricing:    p,
 		kubeClient: client,
 	}
 }
 
 type CloudProvider struct {
-	pricing       *pricing.Provider
+	Pricing       *pricing.Provider
 	kubeClient    kubernetes.Interface
 	populateTypes sync.Once
 	instanceTypes []*cloudprovider.InstanceTypes
@@ -84,7 +116,7 @@ func (c CloudProvider) Create(ctx context.Context, machine *v1alpha5.Machine) (*
 func (c CloudProvider) Delete(ctx context.Context, machine *v1alpha5.Machine) error {
 	err := c.kubeClient.CoreV1().Nodes().Delete(ctx, machine.Name, metav1.DeleteOptions{})
 	if err != nil {
-		if errors.IsNotFound(err) {
+		if kubeErrors.IsNotFound(err) {
 			return nil
 		}
 		return fmt.Errorf("deleting node, %w", err)
@@ -137,14 +169,13 @@ func (c CloudProvider) GetInstanceTypes(ctx context.Context, provisioner *v1alph
 			},
 		})
 	}
-
 	return ret, nil
 }
 
 func (c CloudProvider) offerings(ctx context.Context, it *ec2.InstanceTypeInfo) cloudprovider.Offerings {
 	var ret cloudprovider.Offerings
 	for _, zone := range kwokZones {
-		if odPrice, ok := c.pricing.OnDemandPrice(*it.InstanceType); ok {
+		if odPrice, ok := c.Pricing.OnDemandPrice(*it.InstanceType); ok {
 			ret = append(ret, cloudprovider.Offering{
 				CapacityType: v1alpha5.CapacityTypeOnDemand,
 				Zone:         zone,
@@ -152,8 +183,7 @@ func (c CloudProvider) offerings(ctx context.Context, it *ec2.InstanceTypeInfo) 
 				Available:    true,
 			})
 		}
-		if spotPrice, ok := c.pricing.SpotPrice(*it.InstanceType, zone); ok {
-			// just supply a 50% discount for spot since we don't have static spot pricing
+		if spotPrice, ok := c.Pricing.SpotPrice(*it.InstanceType, zone); ok {
 			ret = append(ret, cloudprovider.Offering{
 				CapacityType: v1alpha5.CapacityTypeSpot,
 				Zone:         zone,
@@ -186,23 +216,26 @@ func (c CloudProvider) toNode(machine *v1alpha5.Machine) (*v1.Node, error) {
 		capacityType = v1alpha5.CapacityTypeSpot
 	}
 	zone := randomChoice(kwokZones)
-	for _, req := range machine.Spec.Requirements {
-		if req.Key == v1.LabelInstanceTypeStable {
+	req, found := lo.Find(machine.Spec.Requirements, func(req v1.NodeSelectorRequirement) bool {
+		return req.Key == v1.LabelInstanceTypeStable
+	})
+	if found {
+		for _, val := range req.Values {
 			// pick the cheapest OD instance type
-			instanceTypeName = req.Values[0]
+			instanceTypeName = val
 			if capacityType == "spot" {
-				instanceTypePrice, _ = c.pricing.SpotPrice(instanceTypeName, zone)
+				instanceTypePrice, _ = c.Pricing.SpotPrice(instanceTypeName, zone)
 			} else {
 				// Default to OD
-				instanceTypePrice, _ = c.pricing.OnDemandPrice(instanceTypeName)
+				instanceTypePrice, _ = c.Pricing.OnDemandPrice(instanceTypeName)
 			}
 			for _, it := range req.Values {
 				var price float64
 				var ok bool
 				if capacityType == "spot" {
-					price, ok = c.pricing.SpotPrice(it, zone)
+					price, ok = c.Pricing.SpotPrice(it, zone)
 				} else {
-					price, ok = c.pricing.OnDemandPrice(it)
+					price, ok = c.Pricing.OnDemandPrice(it)
 				}
 				if ok && price < instanceTypePrice {
 					instanceTypePrice = price
@@ -322,4 +355,23 @@ func (c CloudProvider) toMachine(node *v1.Node) (*v1alpha5.Machine, error) {
 			Allocatable: node.Status.Allocatable,
 		},
 	}, nil
+}
+
+
+// withUserAgent adds a karpenter specific user-agent string to AWS session
+func withUserAgent(sess *session.Session) *session.Session {
+	userAgent := fmt.Sprintf("karpenter.sh-%s", project.Version)
+	sess.Handlers.Build.PushBack(request.MakeAddToUserAgentFreeFormHandler(userAgent))
+	return sess
+}
+
+// checkEC2Connectivity makes a dry-run call to DescribeInstanceTypes.  If it fails, we provide an early indicator that we
+// are having issues connecting to the EC2 API.
+func checkEC2Connectivity(ctx context.Context, api *ec2.EC2) error {
+	_, err := api.DescribeInstanceTypesWithContext(ctx, &ec2.DescribeInstanceTypesInput{DryRun: aws.Bool(true)})
+	var aerr awserr.Error
+	if errors.As(err, &aerr) && aerr.Code() == "DryRunOperation" {
+		return nil
+	}
+	return err
 }

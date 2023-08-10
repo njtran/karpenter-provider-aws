@@ -36,7 +36,7 @@ func main() {
 		log.Println(http.ListenAndServe(fmt.Sprintf(":%d", debugPort), nil))
 	}()
 
-	cloudProvider := kwok.NewCloudProvider(op.KubernetesInterface)
+	cloudProvider := kwok.NewCloudProvider(ctx, op.KubernetesInterface)
 	op.
 		WithControllers(ctx, corecontrollers.NewControllers(
 			ctx,

@@ -45,7 +45,7 @@ func requirements(info *ec2.InstanceTypeInfo, offerings cloudprovider.Offerings)
 		scheduling.NewRequirement(v1.LabelArchStable, v1.NodeSelectorOpIn, getArchitecture(info)),
 		scheduling.NewRequirement(v1.LabelOSStable, v1.NodeSelectorOpIn, "linux"),
 		scheduling.NewRequirement(v1.LabelTopologyZone, v1.NodeSelectorOpIn, uniqueZones(available)...),
-		scheduling.NewRequirement(v1.LabelTopologyRegion, v1.NodeSelectorOpIn, "kwok-region"),
+		scheduling.NewRequirement(v1.LabelTopologyRegion, v1.NodeSelectorOpIn, "us-west-2"),
 		scheduling.NewRequirement(v1.LabelWindowsBuild, v1.NodeSelectorOpDoesNotExist),
 		scheduling.NewRequirement(v1alpha5.LabelCapacityType, v1.NodeSelectorOpIn, uniqueCapacityType(available)...),
 		scheduling.NewRequirement(v1alpha1.LabelInstanceCPU, v1.NodeSelectorOpIn, strconv.FormatInt(aws.Int64Value(info.VCpuInfo.DefaultVCpus), 10)),
