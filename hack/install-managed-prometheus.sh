@@ -5,6 +5,9 @@ helm repo add prometheus-community https://prometheus-community.github.io/helm-c
 kubectl create ns prometheus || true
 kubectl label ns prometheus scrape=enabled --overwrite=true
 
+eksctl create iamserviceaccount --cluster=${CLUSTER_NAME} --name=prometheus-kube-prometheus-prometheus --namespace prometheus \
+  --role-only --role-name=prometheus-irsa-${CLUSTER_NAME} --attach-policy-arn arn:aws:iam::177544064073:policy/PrometheusWorkspaceIngestionPolicy --approve
+
 helm upgrade --install prometheus prometheus-community/kube-prometheus-stack \
     -n prometheus \
     -f ./.github/actions/e2e/install-prometheus/values.yaml \
