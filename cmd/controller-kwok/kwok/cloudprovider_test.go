@@ -17,6 +17,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/aws/karpenter-core/pkg/apis/v1beta1"
 	"github.com/aws/karpenter-core/pkg/operator/scheme"
 	"github.com/aws/karpenter-core/pkg/test"
 	"github.com/aws/karpenter/cmd/controller-kwok/kwok"
@@ -39,7 +40,7 @@ func TestCloudProviderDescribeInstanceTypes(t *testing.T) {
 	})
 	cp := kwok.NewCloudProvider(ctx, env.KubernetesInterface)
 
-	prov := test.Provisioner()
+	prov := test.NodePool(v1beta1.NodePool{IsProvisioner: true})
 	instanceTypes, err := cp.GetInstanceTypes(ctx, prov)
 	if err != nil {
 		t.Fatalf("expected no error, got %s", err)
