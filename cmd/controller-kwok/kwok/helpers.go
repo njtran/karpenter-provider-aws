@@ -14,7 +14,6 @@ limitations under the License.
 package kwok
 
 import (
-	"context"
 	"fmt"
 	"math"
 	"regexp"
@@ -127,10 +126,10 @@ func uniqueZones(available cloudprovider.Offerings) []string {
 	return keys
 }
 
-func computeCapacity(ctx context.Context, info *ec2.InstanceTypeInfo) v1.ResourceList {
+func computeCapacity(info *ec2.InstanceTypeInfo) v1.ResourceList {
 	resourceList := v1.ResourceList{
 		v1.ResourceCPU:               *cpu(info),
-		v1.ResourceMemory:            *memory(ctx, info),
+		v1.ResourceMemory:            *memory(info),
 		v1.ResourceEphemeralStorage:  resource.MustParse("20G"),
 		v1.ResourcePods:              resource.MustParse("110"),
 		v1alpha1.ResourceNVIDIAGPU:   *nvidiaGPUs(info),
@@ -156,7 +155,7 @@ func cpu(info *ec2.InstanceTypeInfo) *resource.Quantity {
 	return resources.Quantity(fmt.Sprint(*info.VCpuInfo.DefaultVCpus))
 }
 
-func memory(ctx context.Context, info *ec2.InstanceTypeInfo) *resource.Quantity {
+func memory(info *ec2.InstanceTypeInfo) *resource.Quantity {
 	sizeInMib := *info.MemoryInfo.SizeInMiB
 	// Gravitons have an extra 64 MiB of cma reserved memory that we can't use
 	if len(info.ProcessorInfo.SupportedArchitectures) > 0 && *info.ProcessorInfo.SupportedArchitectures[0] == "arm64" {

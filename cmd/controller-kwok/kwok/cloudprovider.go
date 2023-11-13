@@ -23,7 +23,6 @@ import (
 	"log"
 	"math/rand"
 	"strings"
-	"sync"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
@@ -43,9 +42,9 @@ import (
 
 	"github.com/aws/karpenter-core/pkg/apis/v1beta1"
 	"github.com/aws/karpenter-core/pkg/cloudprovider"
+	"github.com/aws/karpenter-core/pkg/operator"
 	"github.com/aws/karpenter-core/pkg/scheduling"
 	"github.com/aws/karpenter/pkg/providers/pricing"
-	"github.com/aws/karpenter/pkg/utils/project"
 )
 
 //go:embed describe-instance-types.json
@@ -94,10 +93,10 @@ func NewCloudProvider(ctx context.Context, client kubernetes.Interface) *CloudPr
 }
 
 type CloudProvider struct {
-	Pricing       *pricing.Provider
-	kubeClient    kubernetes.Interface
-	populateTypes sync.Once
-	instanceTypes []*cloudprovider.InstanceTypes
+	Pricing    *pricing.Provider
+	kubeClient kubernetes.Interface
+	// populateTypes sync.Once
+	// instanceTypes []*cloudprovider.InstanceTypes
 }
 
 func (c CloudProvider) Create(ctx context.Context, nodeClaim *v1beta1.NodeClaim) (*v1beta1.NodeClaim, error) {
@@ -156,7 +155,7 @@ func (c CloudProvider) List(ctx context.Context) ([]*v1beta1.NodeClaim, error) {
 func (c CloudProvider) GetInstanceTypes(ctx context.Context, nodePool *v1beta1.NodePool) ([]*cloudprovider.InstanceType, error) {
 	var ret []*cloudprovider.InstanceType
 	for _, it := range instanceTypesOutput.InstanceTypes {
-		offerings := c.offerings(ctx, it)
+		offerings := c.offerings(it)
 		ret = append(ret, &cloudprovider.InstanceType{
 			Name:         *it.InstanceType,
 			Requirements: requirements(it, offerings),
@@ -172,7 +171,7 @@ func (c CloudProvider) GetInstanceTypes(ctx context.Context, nodePool *v1beta1.N
 	return ret, nil
 }
 
-func (c CloudProvider) offerings(ctx context.Context, it *ec2.InstanceTypeInfo) cloudprovider.Offerings {
+func (c CloudProvider) offerings(it *ec2.InstanceTypeInfo) cloudprovider.Offerings {
 	var ret cloudprovider.Offerings
 	for _, zone := range kwokZones {
 		if odPrice, ok := c.Pricing.OnDemandPrice(*it.InstanceType); ok {
@@ -203,6 +202,7 @@ func (c CloudProvider) Name() string {
 	return "kwok-provider"
 }
 
+// nolint:gocyclo
 func (c CloudProvider) toNode(nodeClaim *v1beta1.NodeClaim) (*v1.Node, error) {
 	newName := strings.Replace(namesgenerator.GetRandomName(0), "_", "-", -1)
 	newName = fmt.Sprintf("%s-%d", newName, rand.Uint32())
@@ -301,7 +301,7 @@ func addInstanceLabels(labels map[string]string, instanceType *cloudprovider.Ins
 	}
 	// Kwok has some scalability limitations.
 	// Randomly add each new node to one of the pre-created partitions.
-	ret["kwok-partition"] = randomPartition(10)
+	ret["kwok-partition"] = randomPartition(len(partitions))
 	ret[v1beta1.CapacityTypeLabelKey] = capacityType
 	// no zone set by requirements, so just pick one
 	if _, ok := ret[v1.LabelTopologyZone]; !ok {
@@ -315,7 +315,7 @@ func addInstanceLabels(labels map[string]string, instanceType *cloudprovider.Ins
 
 // pick one of the first n letters
 func randomPartition(n int) string {
-	i := rand.Intn(len(partitions))
+	i := rand.Intn(n)
 	return partitions[i]
 }
 
@@ -342,12 +342,12 @@ func (c CloudProvider) toNodeClaim(node *v1.Node) (*v1beta1.NodeClaim, error) {
 			Annotations: addKwokAnnotation(node.Annotations),
 		},
 		Spec: v1beta1.NodeClaimSpec{
-			Taints:             nil,
-			StartupTaints:      nil,
-			Requirements:       nil,
-			Resources:          v1beta1.ResourceRequirements{},
-			Kubelet:            nil,
-			NodeClass: nil,
+			Taints:        nil,
+			StartupTaints: nil,
+			Requirements:  nil,
+			Resources:     v1beta1.ResourceRequirements{},
+			Kubelet:       nil,
+			NodeClassRef:  nil,
 		},
 		Status: v1beta1.NodeClaimStatus{
 			NodeName:    node.Name,
@@ -358,10 +358,9 @@ func (c CloudProvider) toNodeClaim(node *v1.Node) (*v1beta1.NodeClaim, error) {
 	}, nil
 }
 
-
 // withUserAgent adds a karpenter specific user-agent string to AWS session
 func withUserAgent(sess *session.Session) *session.Session {
-	userAgent := fmt.Sprintf("karpenter.sh-%s", project.Version)
+	userAgent := fmt.Sprintf("karpenter.sh-%s", operator.Version)
 	sess.Handlers.Build.PushBack(request.MakeAddToUserAgentFreeFormHandler(userAgent))
 	return sess
 }

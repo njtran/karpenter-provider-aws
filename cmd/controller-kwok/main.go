@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	_ "net/http/pprof"
 
 	corecontrollers "github.com/aws/karpenter-core/pkg/controllers"
 	"github.com/aws/karpenter-core/pkg/controllers/state"
@@ -39,7 +38,6 @@ func main() {
 	cloudProvider := kwok.NewCloudProvider(ctx, op.KubernetesInterface)
 	op.
 		WithControllers(ctx, corecontrollers.NewControllers(
-			ctx,
 			op.Clock,
 			op.GetClient(),
 			op.KubernetesInterface,
