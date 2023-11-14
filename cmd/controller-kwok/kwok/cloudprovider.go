@@ -3,7 +3,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-	http://www.apache.org/licenses/LICENSE-2.0
+    http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -11,17 +11,19 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+
 package kwok
 
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
-	"math/rand"
+	"math/big"
 	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -160,7 +162,7 @@ func (c CloudProvider) GetInstanceTypes(ctx context.Context, nodePool *v1beta1.N
 			Name:         *it.InstanceType,
 			Requirements: requirements(it, offerings),
 			Offerings:    offerings,
-			Capacity:     computeCapacity(ctx, it),
+			Capacity:     computeCapacity(it),
 			Overhead: &cloudprovider.InstanceTypeOverhead{
 				KubeReserved:      nil,
 				SystemReserved:    nil,
@@ -205,7 +207,8 @@ func (c CloudProvider) Name() string {
 // nolint:gocyclo
 func (c CloudProvider) toNode(nodeClaim *v1beta1.NodeClaim) (*v1.Node, error) {
 	newName := strings.Replace(namesgenerator.GetRandomName(0), "_", "-", -1)
-	newName = fmt.Sprintf("%s-%d", newName, rand.Uint32())
+	n := lo.Must(rand.Int(rand.Reader, big.NewInt(int64(32))))
+	newName = fmt.Sprintf("%s-%d", newName, n.Uint64())
 
 	var instanceTypeName string
 	var instanceTypePrice float64
@@ -314,14 +317,14 @@ func addInstanceLabels(labels map[string]string, instanceType *cloudprovider.Ins
 }
 
 // pick one of the first n letters
-func randomPartition(n int) string {
-	i := rand.Intn(n)
-	return partitions[i]
+func randomPartition(numPartitions int) string {
+	n := lo.Must(rand.Int(rand.Reader, big.NewInt(int64(numPartitions))))
+	return partitions[n.Int64()]
 }
 
 func randomChoice(zones []string) string {
-	i := rand.Intn(len(zones))
-	return zones[i]
+	n := lo.Must(rand.Int(rand.Reader, big.NewInt(int64(len(zones)))))
+	return zones[n.Int64()]
 }
 
 func addKwokAnnotation(annotations map[string]string) map[string]string {

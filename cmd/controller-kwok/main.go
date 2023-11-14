@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	corecontrollers "github.com/aws/karpenter-core/pkg/controllers"
 	"github.com/aws/karpenter-core/pkg/controllers/state"
@@ -32,7 +33,11 @@ func main() {
 	go func() {
 		debugPort := 6060
 		log.Printf("debug port is listening on %d", debugPort)
-		log.Println(http.ListenAndServe(fmt.Sprintf(":%d", debugPort), nil))
+		server := &http.Server{
+			Addr:              fmt.Sprintf(":%d", debugPort),
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		log.Println(server.ListenAndServe())
 	}()
 
 	cloudProvider := kwok.NewCloudProvider(ctx, op.KubernetesInterface)
