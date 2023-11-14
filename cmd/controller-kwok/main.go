@@ -20,12 +20,19 @@ import (
 	"net/http"
 	"time"
 
+	coreapis "github.com/aws/karpenter-core/pkg/apis"
 	corecontrollers "github.com/aws/karpenter-core/pkg/controllers"
 	"github.com/aws/karpenter-core/pkg/controllers/state"
 	coreoperator "github.com/aws/karpenter-core/pkg/operator"
 	"github.com/aws/karpenter/cmd/controller-kwok/kwok"
+	"github.com/aws/karpenter/pkg/apis"
 	"github.com/aws/karpenter/pkg/operator"
 )
+
+
+func init() {
+	coreapis.Settings = append(coreapis.Settings, apis.Settings...)
+}
 
 func main() {
 	ctx, op := operator.NewOperator(coreoperator.NewOperator())
