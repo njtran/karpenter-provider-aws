@@ -24,10 +24,11 @@ import (
 	"github.com/aws/karpenter-core/pkg/controllers/state"
 	coreoperator "github.com/aws/karpenter-core/pkg/operator"
 	"github.com/aws/karpenter/cmd/controller-kwok/kwok"
+	"github.com/aws/karpenter/pkg/operator"
 )
 
 func main() {
-	ctx, op := coreoperator.NewOperator()
+	ctx, op := operator.NewOperator(coreoperator.NewOperator())
 
 	log.Println("starting karpenter-kwok")
 	go func() {
